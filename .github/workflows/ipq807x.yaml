@@ -1,65 +1,88 @@
 name: Build IPQ807x NSS
-
-on: workflow_dispatch
-
+on: 
+  workflow_dispatch:
 jobs:
-    build:
-        name: Prepare and build IPQ807x NSS generic images
-        runs-on: self-hosted
+  build:
+    name: Prepare and build IPQ807x NSS generic images
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Show system
+      run: |
+        echo -e "Total CPU cores\t: $(nproc)"
+        cat /proc/cpuinfo | grep 'model name'
+        ulimit -a
+    - name: Maximize build space
+      uses: easimon/maximize-build-space@master
+      with:
+        swap-size-mb: 512
+        temp-reserve-mb: 100
+        root-reserve-mb: 1280
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Init build dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo swapoff -a
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install aria2
+        sudo -E wget -P /usr/local/sbin/ https://github.com/HiGarfield/lede-17.01.4-Mod/raw/master/.github/backup/apt-fast
+        sudo -E chmod -R 755 /usr/local/sbin/apt-fast
+        sudo -E apt-fast -y -qq install zstd dwarves llvm clang lldb lld build-essential rsync asciidoc binutils bzip2 gawk gettext git libncurses5-dev patch python3 python2.7 unzip zlib1g-dev lib32gcc-s1 libc6-dev-i386 subversion flex uglifyjs gcc-multilib p7zip p7zip-full msmtp libssl-dev texinfo libreadline-dev libglib2.0-dev xmlto qemu-utils upx-ucl libelf-dev autoconf automake libtool autopoint device-tree-compiler g++-multilib antlr3 gperf wget ccache curl swig coreutils vim nano python3 python3-pip python3-ply haveged lrzsz scons libpython3-dev
+        sudo -E pip3 install pyelftools pylibfdt
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo -E git config --global user.name 'GitHub Actions' && git config --global user.email 'noreply@github.com'
+        sudo -E git config --global core.abbrev auto
+        df -h
+    - name: Update and install feeds
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+    - name: Import full config for IPQ807x NSS Generic
+      run: |
+        mv .full_config .config
+    # - name: QoL fixes on default config
+    #   run: |
+    #     mkdir -p files/etc/uci-defaults
+    #     cat > files/etc/uci-defaults/xxx_config << EOF
+    #     uci set wireless.radio0.country='US'
+    #     uci set wireless.radio1.country='US'
+    #     uci set wireless.radio2.country='US'
+    #     uci set wireless.radio1.disabled=0
+    #     uci set wireless.radio2.disabled=0
+    #     uci commit
+    #     EOF
+    - name: Download package sources
+      run: make download -j$(nproc) V=s
 
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v4
+    - name: Build tools
+      run: |
+        make tools/install -j$(nproc) V=s || \
+        make tools/install V=s
+    - name: Build toolchain
+      run: |
+        make toolchain/install -j$(nproc) V=s || \
+        make toolchain/install V=s
+    - name: Build target images
+      run: |
+        make -j$(nproc) V=s || \
+        make V=s
+    - name: Get the current date
+      run: echo "NOW=$(date +%F-%H%M)" >> $GITHUB_ENV
 
-            - name: Update and install feeds
-              run: |
-                ./scripts/feeds update -a
-                ./scripts/feeds install -a
-
-            - name: Import full config for IPQ807x NSS Generic
-              run: |
-                mv .full_config .config
-
-            - name: QoL fixes on default config
-              run: |
-                mkdir -p files/etc/uci-defaults
-                cat > files/etc/uci-defaults/xxx_config << EOF
-                uci set wireless.radio0.country='US'
-                uci set wireless.radio1.country='US'
-                uci set wireless.radio2.country='US'
-                uci set wireless.radio1.disabled=0
-                uci set wireless.radio2.disabled=0
-                uci commit
-                EOF
-
-            - name: Download package sources
-              run: make download V=s
-
-            - name: Build tools
-              run: |
-                make tools/install -j$(nproc) V=s || \
-                make tools/install V=s
-
-            - name: Build toolchain
-              run: |
-                make toolchain/install -j$(nproc) V=s || \
-                make toolchain/install V=s
-
-            - name: Build target images
-              run: |
-                make -j$(nproc) V=s || \
-                make V=s
-
-            - name: Get the current date
-              run: echo "NOW=$(date +%F-%H%M)" >> $GITHUB_ENV
-
-            - name: Create a release
-              uses: "ncipollo/release-action@v1"
-              with:
-                name: "Updated prebuilt images ${{ env.NOW }}"
-                commit: "main"
-                tag: "ipq807x-${{ env.NOW }}"
-                generateReleaseNotes: true
-                makeLatest: true
-                artifacts: bin/targets/qualcommax/ipq807x/*
-                token: "${{ secrets.GITHUB_TOKEN }}"
+    - name: Create a release
+      uses: "ncipollo/release-action@v1"
+      with:
+        name: "Updated prebuilt images ${{ env.NOW }}"
+        commit: "main"
+        tag: "ipq807x-${{ env.NOW }}"
+        generateReleaseNotes: true
+        makeLatest: true
+        artifacts: bin/targets/qualcommax/ipq807x/*
+        token: "${{ secrets.GITHUB_TOKEN }}"
